@@ -14,6 +14,20 @@ const WHISPER_PROVIDERS = {
   local: LocalWhisper,
 };
 
+// Funktion zur Deduplizierung von Zeilen
+function deduplicateContent(content) {
+  const seen = new Set();
+  return content
+    .split("\n") // Zerlege den Inhalt in Zeilen
+    .filter((line) => {
+      if (line.trim() === "") return false; // Entferne leere Zeilen
+      if (seen.has(line)) return false; // Überspringe doppelte nicht-leere Zeilen
+      seen.add(line);
+      return true;
+    })
+    .join("\n"); // Füge die deduplizierten Zeilen wieder zusammen
+}
+
 async function asAudio({ fullFilePath = "", filename = "", options = {} }) {
   const WhisperProvider = WHISPER_PROVIDERS.hasOwnProperty(
     options?.whisperProvider
@@ -45,18 +59,21 @@ async function asAudio({ fullFilePath = "", filename = "", options = {} }) {
     };
   }
 
+  // Wende die Deduplizierung auf den transkribierten Text an
+  const deduplicatedContent = deduplicateContent(content);
+
   const data = {
     id: v4(),
     url: "file://" + fullFilePath,
     title: filename,
     docAuthor: "no author found",
     description: "No description found.",
-    docSource: "pdf file uploaded by the user.",
+    docSource: "audio file uploaded by the user.",
     chunkSource: "",
     published: createdDate(fullFilePath),
-    wordCount: content.split(" ").length,
-    pageContent: content,
-    token_count_estimate: tokenizeString(content).length,
+    wordCount: deduplicatedContent.split(" ").length,
+    pageContent: deduplicatedContent,
+    token_count_estimate: tokenizeString(deduplicatedContent).length,
   };
 
   const document = writeToServerDocuments(
@@ -67,6 +84,7 @@ async function asAudio({ fullFilePath = "", filename = "", options = {} }) {
   console.log(
     `[SUCCESS]: ${filename} transcribed, converted & ready for embedding.\n`
   );
+  
   return { success: true, reason: null, documents: [document] };
 }
 
