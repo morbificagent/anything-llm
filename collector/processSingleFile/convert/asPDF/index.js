@@ -8,6 +8,20 @@ const { tokenizeString } = require("../../../utils/tokenizer");
 const { default: slugify } = require("slugify");
 const PDFLoader = require("./PDFLoader");
 
+// Funktion zur Deduplizierung von Zeilen
+function deduplicateContent(content) {
+  const seen = new Set();
+  return content
+    .split("\n") // Zerlege den Inhalt in Zeilen
+    .filter((line) => {
+      if (line.trim() === "") return false; // Entferne leere Zeilen
+      if (seen.has(line)) return false; // Überspringe doppelte nicht-leere Zeilen
+      seen.add(line);
+      return true;
+    })
+    .join("\n"); // Füge die deduplizierten Zeilen wieder zusammen
+}
+
 async function asPdf({ fullFilePath = "", filename = "" }) {
   const pdfLoader = new PDFLoader(fullFilePath, {
     splitPages: true,
@@ -37,7 +51,9 @@ async function asPdf({ fullFilePath = "", filename = "" }) {
     };
   }
 
-  const content = pageContent.join("");
+  // Füge alle Seiteninhalte zusammen und dedupliziere sie
+  const content = deduplicateContent(pageContent.join("\n"));
+
   const data = {
     id: v4(),
     url: "file://" + fullFilePath,
@@ -58,6 +74,7 @@ async function asPdf({ fullFilePath = "", filename = "" }) {
   );
   trashFile(fullFilePath);
   console.log(`[SUCCESS]: ${filename} converted & ready for embedding.\n`);
+  
   return { success: true, reason: null, documents: [document] };
 }
 
