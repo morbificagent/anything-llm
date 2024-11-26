@@ -74,53 +74,118 @@ const Weaviate = {
       return 0;
     }
   },
-  similarityResponse: async function (
-    client,
-    namespace,
-    queryVector,
-    similarityThreshold = 0.25,
-    topN = 4,
-    filterIdentifiers = []
-  ) {
-    const result = {
-      contextTexts: [],
-      sourceDocuments: [],
-      scores: [],
+
+
+similarityResponse: async function (
+  client,
+  namespace,
+  queryVector,
+  similarityThreshold = 0.40, // Standardwert für certainty (bei reiner Vektor-Suche)
+  topN = 4,
+  filterIdentifiers = [],
+  useHybrid = true, // Standardmäßig hybride Suche aktiviert
+  queryText = "" // Optionaler Text für Keyword-Suche
+) {
+  const result = {
+    contextTexts: [],
+    sourceDocuments: [],
+    scores: [],
+  };
+
+  // Dynamisch die Felder der Klasse ermitteln
+  const weaviateClass = await this.namespace(client, namespace);
+  const fields =
+    weaviateClass.properties?.map((prop) => prop.name)?.join(" ") ?? "";
+
+  if (useHybrid) {
+    // Hybride Suche durchführen
+    const hybridParams = {
+      query: queryText,
+      vector: queryVector,
+      alpha: 0.5, // Gewichtung zwischen Keyword- und Vector-Suche 0=nur Key, 1=nur Semantik
     };
 
-    const weaviateClass = await this.namespace(client, namespace);
-    const fields =
-      weaviateClass.properties?.map((prop) => prop.name)?.join(" ") ?? "";
-    const queryResponse = await client.graphql
-      .get()
-      .withClassName(camelCase(namespace))
-      .withFields(`${fields} _additional { id certainty }`)
-      .withNearVector({ vector: queryVector })
-      .withLimit(topN)
-      .do();
+    // Debug-Ausgabe des Vektors und der Keywords
+    console.log("Verwendete Keywords:", queryText);
 
-    const responses = queryResponse?.data?.Get?.[camelCase(namespace)];
-    responses.forEach((response) => {
-      // In Weaviate we have to pluck id from _additional and spread it into the rest
-      // of the properties.
-      const {
-        _additional: { id, certainty },
-        ...rest
-      } = response;
-      if (certainty < similarityThreshold) return;
-      if (filterIdentifiers.includes(sourceIdentifier(rest))) {
-        console.log(
-          "Weaviate: A source was filtered from context as it's parent document is pinned."
-        );
-        return;
-      }
-      result.contextTexts.push(rest.text);
-      result.sourceDocuments.push({ ...rest, id });
-      result.scores.push(certainty);
-    });
+    try {
+      const queryResponse = await client.graphql
+        .get()
+        .withClassName(camelCase(namespace))
+        .withFields(`${fields} _additional { id score }`) // Dynamische Felder + Score
+        .withHybrid(hybridParams)
+        .withLimit(topN)
+        .do();
 
-    return result;
-  },
+      const responses = queryResponse?.data?.Get?.[camelCase(namespace)] || [];
+      responses.forEach((response) => {
+        const { _additional, ...rest } = response;
+        const { id, score } = _additional;
+
+        // Debug-Ausgabe für jedes Ergebnis
+        console.debug(`Result ID: ${id}, Score: ${score}`);
+
+        // Filtere Ergebnisse basierend auf dem Score (hybride Suche)
+     if (score < 0.25) return;
+
+        if (filterIdentifiers.includes(sourceIdentifier(rest))) {
+          console.log(
+            "Weaviate: A source was filtered from context as its parent document is pinned."
+          );
+          return;
+        }
+
+        result.contextTexts.push(rest.text);
+        result.sourceDocuments.push({ ...rest, id });
+        result.scores.push(score);
+      });
+
+      return result;
+    } catch (error) {
+      console.error("Weaviate::hybridSearch", error.message);
+      return result; // Gibt leeres Ergebnis zurück bei Fehler
+    }
+  } else {
+    // Reine Vektor-Suche durchführen (mit certainty: 0.60)
+    try {
+      const queryResponse = await client.graphql
+        .get()
+        .withClassName(camelCase(namespace))
+        .withFields(`${fields} _additional { id certainty }`) // Dynamische Felder + Certainty
+        .withNearVector({ vector: queryVector, certainty: similarityThreshold })
+        .withLimit(topN)
+        .do();
+
+      const responses = queryResponse?.data?.Get?.[camelCase(namespace)] || [];
+      responses.forEach((response) => {
+        const { _additional, ...rest } = response;
+        const { id, certainty } = _additional;
+
+        // Debug-Ausgabe für jedes Ergebnis
+        console.debug(`Result ID: ${id}, Certainty: ${certainty}`);
+
+
+        if (filterIdentifiers.includes(sourceIdentifier(rest))) {
+          console.log(
+            "Weaviate: A source was filtered from context as its parent document is pinned."
+          );
+          return;
+        }
+
+        result.contextTexts.push(rest.text);
+        result.sourceDocuments.push({ ...rest, id });
+        result.scores.push(certainty);
+      });
+
+      return result;
+    } catch (error) {
+      console.error("Weaviate::similarityResponse", error.message);
+      return result; // Gibt leeres Ergebnis zurück bei Fehler
+    }
+  }
+},
+
+
   allNamespaces: async function (client) {
     try {
       const { classes = [] } = await client.schema.getter().do();
@@ -246,61 +311,77 @@ const Weaviate = {
         }
       }
 
-      // If we are here then we are going to embed and store a novel document.
-      // We have to do this manually as opposed to using LangChains `Chroma.fromDocuments`
-      // because we then cannot atomically control our namespace to granularly find/remove documents
-      // from vectordb.
-      const EmbedderEngine = getEmbeddingEngineSelection();
-      const textSplitter = new TextSplitter({
-        chunkSize: TextSplitter.determineMaxChunkSize(
-          await SystemSettings.getValueOrFallback({
-            label: "text_splitter_chunk_size",
-          }),
-          EmbedderEngine?.embeddingMaxChunkLength
-        ),
-        chunkOverlap: await SystemSettings.getValueOrFallback(
-          { label: "text_splitter_chunk_overlap" },
-          20
-        ),
-        chunkHeaderMeta: TextSplitter.buildHeaderMeta(metadata),
-      });
-      const textChunks = await textSplitter.splitText(pageContent);
+// Anpassung ASC Start
 
-      console.log("Chunks created from document:", textChunks.length);
-      const documentVectors = [];
-      const vectors = [];
-      const vectorValues = await EmbedderEngine.embedChunks(textChunks);
-      const submission = {
-        ids: [],
-        vectors: [],
-        properties: [],
-      };
+// If we are here then we are going to embed and store a novel document.
+// We have to do this manually as opposed to using LangChains `Chroma.fromDocuments`
+// because we then cannot atomically control our namespace to granularly find/remove documents
+// from vectordb.
 
-      if (!!vectorValues && vectorValues.length > 0) {
-        for (const [i, vector] of vectorValues.entries()) {
-          const flattenedMetadata = this.flattenObjectForWeaviate(metadata);
-          const vectorRecord = {
-            class: camelCase(namespace),
-            id: uuidv4(),
-            vector: vector,
-            // [DO NOT REMOVE]
-            // LangChain will be unable to find your text if you embed manually and dont include the `text` key.
-            // https://github.com/hwchase17/langchainjs/blob/5485c4af50c063e257ad54f4393fa79e0aff6462/langchain/src/vectorstores/weaviate.ts#L133
-            properties: { ...flattenedMetadata, text: textChunks[i] },
-          };
+const EmbedderEngine = getEmbeddingEngineSelection();
+const textSplitter = new TextSplitter({
+  chunkSize: TextSplitter.determineMaxChunkSize(
+    await SystemSettings.getValueOrFallback({
+      label: "text_splitter_chunk_size",
+    }),
+    EmbedderEngine?.embeddingMaxChunkLength
+  ),
+  chunkOverlap: await SystemSettings.getValueOrFallback(
+    { label: "text_splitter_chunk_overlap" },
+    20
+  ),
+  chunkHeaderMeta: TextSplitter.buildHeaderMeta(metadata),
+});
 
-          submission.ids.push(vectorRecord.id);
-          submission.vectors.push(vectorRecord.values);
-          submission.properties.push(metadata);
+const textChunks = await textSplitter.splitText(pageContent);
 
-          vectors.push(vectorRecord);
-          documentVectors.push({ docId, vectorId: vectorRecord.id });
-        }
-      } else {
-        throw new Error(
-          "Could not embed document chunks! This document will not be recorded."
-        );
-      }
+console.log("Chunks created from document:", textChunks.length);
+
+// Extrahiere den Dateinamen (falls verfügbar)
+const fileName = fullFilePath ? require("path").basename(fullFilePath) : "unknown_file";
+
+// Füge den Dateinamen zu jedem Chunk hinzu
+//const enrichedChunks = textChunks.map(chunk => `${fileName}: ${chunk}`);
+const enrichedChunks = textChunks.map(chunk => `${require("path").basename(fullFilePath)}: ${chunk}`);
+
+const documentVectors = [];
+const vectors = [];
+const vectorValues = await EmbedderEngine.embedChunks(enrichedChunks);
+
+const submission = {
+  ids: [],
+  vectors: [],
+  properties: [],
+};
+
+if (!!vectorValues && vectorValues.length > 0) {
+  for (const [i, vector] of vectorValues.entries()) {
+    const flattenedMetadata = this.flattenObjectForWeaviate(metadata);
+    const vectorRecord = {
+      class: camelCase(namespace),
+      id: uuidv4(),
+      vector: vector,
+      // [DO NOT REMOVE]
+      // LangChain will be unable to find your text if you embed manually and dont include the `text` key.
+      // https://github.com/hwchase17/langchainjs/blob/5485c4af50c063e257ad54f4393fa79e0aff6462/langchain/src/vectorstores/weaviate.ts#L133
+      properties: {
+        ...flattenedMetadata,
+        text: enrichedChunks[i], // Verwende die angereicherten Chunks mit Dateinamen
+      },
+    };
+    submission.ids.push(vectorRecord.id);
+    submission.vectors.push(vectorRecord.vector);
+    submission.properties.push(metadata);
+    vectors.push(vectorRecord);
+    documentVectors.push({ docId, vectorId: vectorRecord.id });
+  }
+} else {
+  throw new Error(
+    "Could not embed document chunks! This document will not be recorded."
+  );
+}
+      
+      //Anpassung ASC zu Ende
 
       const { client } = await this.connect();
       const weaviateClassExits = await this.hasNamespace(namespace);
@@ -360,6 +441,16 @@ const Weaviate = {
     await DocumentVectors.deleteIds(indexes);
     return true;
   },
+  
+// Hilfsfunktion zur Extraktion des Keywords
+extractKeyword: function (inputString) {
+  // Suche nach Wörtern in Anführungszeichen oder hinter einem Hashtag
+  const match = inputString.match(/"(.*?)"|#([a-zA-Z0-9]+)/);
+  
+  // Prüfe, ob ein Treffer vorhanden ist und gib das passende Ergebnis zurück
+  return match ? (match[1] || match[2]) : null;
+},
+
   performSimilaritySearch: async function ({
     namespace = null,
     input = "",
@@ -379,6 +470,12 @@ const Weaviate = {
         message: "Invalid query - no documents found for workspace!",
       };
     }
+    
+      // Extrahiere das Keyword aus dem Input
+  const keyword = this.extractKeyword(input);
+  console.log("Extrahiertes Keyword:", keyword);
+    
+    console.log("Semantischer Query-Text:", input);
 
     const queryVector = await LLMConnector.embedTextInput(input);
     const { contextTexts, sourceDocuments } = await this.similarityResponse(
@@ -387,7 +484,9 @@ const Weaviate = {
       queryVector,
       similarityThreshold,
       topN,
-      filterIdentifiers
+      filterIdentifiers,
+      true,
+      keyword || "" // Verwende das extrahierte Keyword oder einen leeren String
     );
 
     const sources = sourceDocuments.map((metadata, i) => {
