@@ -10,6 +10,20 @@ const {
 const { tokenizeString } = require("../../utils/tokenizer");
 const { default: slugify } = require("slugify");
 
+// Funktion zur Deduplizierung von Zeilen
+function deduplicateContent(content) {
+  const seen = new Set();
+  return content
+    .split("\n") // Zerlege den Inhalt in Zeilen
+    .filter((line) => {
+      if (line.trim() === "") return false; // entferne leere Zeilen
+      if (seen.has(line)) return false; // Überspringe doppelte nicht-leere Zeilen
+      seen.add(line);
+      return true;
+    })
+    .join("\n"); // Füge die deduplizierten Zeilen wieder zusammen
+}
+
 function convertToCSV(data) {
   return data
     .map((row) =>
@@ -48,12 +62,15 @@ async function asXlsx({ fullFilePath = "", filename = "" }) {
     for (const sheet of workSheetsFromFile) {
       try {
         const { name, data } = sheet;
-        const content = convertToCSV(data);
+        let content = convertToCSV(data);
 
         if (!content?.length) {
           console.warn(`Sheet "${name}" is empty. Skipping.`);
           continue;
         }
+
+        // Wende die Deduplizierung auf den CSV-Inhalt an
+        content = deduplicateContent(content);
 
         console.log(`-- Processing sheet: ${name} --`);
         const sheetData = {
