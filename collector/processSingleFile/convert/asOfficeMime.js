@@ -8,6 +8,20 @@ const {
 const { tokenizeString } = require("../../utils/tokenizer");
 const { default: slugify } = require("slugify");
 
+// Funktion zur Deduplizierung von Zeilen
+function deduplicateContent(content) {
+  const seen = new Set();
+  return content
+    .split("\n") // Zerlege den Inhalt in Zeilen
+    .filter((line) => {
+      if (line.trim() === "") return false; // Entferne leere Zeilen
+      if (seen.has(line)) return false; // Überspringe doppelte nicht-leere Zeilen
+      seen.add(line);
+      return true;
+    })
+    .join("\n"); // Füge die deduplizierten Zeilen wieder zusammen
+}
+
 async function asOfficeMime({ fullFilePath = "", filename = "" }) {
   console.log(`-- Working ${filename} --`);
   let content = "";
@@ -26,6 +40,9 @@ async function asOfficeMime({ fullFilePath = "", filename = "" }) {
       documents: [],
     };
   }
+
+  // Wende die Deduplizierung auf den gesamten Text an
+  content = deduplicateContent(content);
 
   const data = {
     id: v4(),
@@ -47,6 +64,7 @@ async function asOfficeMime({ fullFilePath = "", filename = "" }) {
   );
   trashFile(fullFilePath);
   console.log(`[SUCCESS]: ${filename} converted & ready for embedding.\n`);
+  
   return { success: true, reason: null, documents: [document] };
 }
 
