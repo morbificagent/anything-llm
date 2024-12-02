@@ -16,7 +16,7 @@ function deduplicateContent(content) {
     .split("\n") // Zerlege den Inhalt in Zeilen
     .filter((line) => {
       if (line.trim() === "") return false; // Entferne leere Zeilen
-      if (seen.has(line)) return false; // Überspringe doppelte Zeilen
+//      if (seen.has(line)) return false; // Überspringe doppelte Zeilen
       seen.add(line);
       return true;
     })
