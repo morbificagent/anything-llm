@@ -343,7 +343,14 @@ const fileName = fullFilePath ? require("path").basename(fullFilePath) : "unknow
 // Füge den Dateinamen zu jedem Chunk hinzu
 //const enrichedChunks = textChunks.map(chunk => `${fileName}: ${chunk}`);
 //const enrichedChunks = textChunks.map(chunk => `${require("path").basename(fullFilePath)}: ${chunk}`);
-const enrichedChunks = textChunks.map(chunk => `${fullFilePath ? require("path").basename(fullFilePath) : "unknown_file"}: ${chunk}`);
+//const enrichedChunks = textChunks.map(chunk => `${fullFilePath ? require("path").basename(fullFilePath) : "unknown_file"}: ${chunk}`);
+const enrichedChunks = textChunks.map(chunk => {
+  if (fullFilePath) {
+    const fileName = require("path").basename(fullFilePath);
+    return `${fileName}: ${chunk}`;
+  }
+  return chunk; // Wenn fullFilePath null ist, wird der Dateiname nicht hinzugefügt
+});
       
 const documentVectors = [];
 const vectors = [];
