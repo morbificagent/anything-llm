@@ -342,8 +342,9 @@ const fileName = fullFilePath ? require("path").basename(fullFilePath) : "unknow
 
 // Füge den Dateinamen zu jedem Chunk hinzu
 //const enrichedChunks = textChunks.map(chunk => `${fileName}: ${chunk}`);
-const enrichedChunks = textChunks.map(chunk => `${require("path").basename(fullFilePath)}: ${chunk}`);
-
+//const enrichedChunks = textChunks.map(chunk => `${require("path").basename(fullFilePath)}: ${chunk}`);
+const enrichedChunks = textChunks.map(chunk => `${fullFilePath ? require("path").basename(fullFilePath) : "unknown_file"}: ${chunk}`);
+      
 const documentVectors = [];
 const vectors = [];
 const vectorValues = await EmbedderEngine.embedChunks(enrichedChunks);
