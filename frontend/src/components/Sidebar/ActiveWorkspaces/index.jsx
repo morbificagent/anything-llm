@@ -21,14 +21,28 @@ export default function ActiveWorkspaces() {
   const { user } = useUser();
   const isInWorkspaceSettings = !!useMatch("/workspace/:slug/settings/:tab");
 
-  useEffect(() => {
-    async function getWorkspaces() {
-      const workspaces = await Workspace.all();
-      setLoading(false);
-      setWorkspaces(workspaces);
-    }
-    getWorkspaces();
-  }, []);
+// Anpassung ASC
+useEffect(() => {
+  async function getWorkspaces() {
+    let workspaces = await Workspace.all();
+    
+    // Definiere die Prioritäts-Slugs
+    const prioritySlugs = ['allgemeinwissen', 'coding'];
+    
+    // Sortiere Workspaces, sodass Prioritäts-Workspaces zuerst kommen
+    workspaces.sort((a, b) => {
+      const aPriority = prioritySlugs.includes(a.slug) ? -1 : 0;
+      const bPriority = prioritySlugs.includes(b.slug) ? -1 : 0;
+      return aPriority - bPriority;
+    });
+    
+    setLoading(false);
+    setWorkspaces(workspaces);
+  }
+  getWorkspaces();
+}, []);
+
+// Anpassung ASC zu Ende
 
   if (loading) {
     return (
