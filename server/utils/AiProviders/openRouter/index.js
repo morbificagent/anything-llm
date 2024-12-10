@@ -216,6 +216,12 @@ class OpenRouterLLM {
       stream: true,
       messages,
       temperature,
+      provider: {
+        order: [
+        "DeepInfra",
+        "OpenAI" 
+      ]
+      },
     });
     return streamRequest;
   }
