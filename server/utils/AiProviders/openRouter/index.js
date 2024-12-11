@@ -218,7 +218,7 @@ class OpenRouterLLM {
       temperature,
       provider: {
         order: [
-        "Google",
+        "DeepInfra",
         "OpenAI" 
       ]
       },
